@@ -3,9 +3,11 @@ import numpy as np
 import ros_numpy
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from sklearn.linear_model import LinearRegression
 from tf_bodypix.api import BodyPixModelPaths, download_model, load_model
+
+
 
 from functions import HTM, pixel_ratio
 
@@ -45,6 +47,8 @@ class ImageConverter:
             rospy.logdebug('new depth_image, timestamp %d', data.header.stamp.secs)
             
             self.depth_image_timestamp = data.header.stamp.secs
+            # np_arr = np.fromstring(data.data, np.uint8)
+            # self.depth_image = cv2.imdecode(np_arr, cv2.CV_LOAD_IMAGE_COLOR)
             self.depth_image = ros_numpy.numpify(data)
 
         except CvBridgeError as e:
@@ -56,8 +60,12 @@ class ImageConverter:
     def color_image_callback(self, data):
         try:
             rospy.logdebug('new color_image, timestamp %d', data.header.stamp.secs)
+
             self.color_image_timestamp = data.header.stamp.secs
-            self.color_image = ros_numpy.numpify(data)
+            # print('abc')
+            np_arr = np.fromstring(data.data, np.uint8)
+            self.color_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            # self.color_image = ros_numpy.numpify(data)
 
         except CvBridgeError as e:
             rospy.logerr('color_image_callback error: "%s"', e)
@@ -74,6 +82,7 @@ class ImageConverter:
             self.color_image.shape
         )
         
+            # self.depth_image = cv2.imdecode(np_arr, cv2.CV_LOAD_IMAGE_COLOR)
         result = self.bodypix_model.predict_single(self.color_image)
 
         # simple mask
@@ -99,6 +108,7 @@ class ImageConverter:
         non_zero_parts = np.array(np.nonzero(masked_depth_image))
         
         trunk_dict = {}
+            # self.depth_image = cv2.imdecode(np_arr, cv2.CV_LOAD_IMAGE_COLOR)
         for i in range(non_zero_parts.shape[1]):
             if non_zero_parts[0,i] not in trunk_dict:
                 trunk_dict[non_zero_parts[0,i]] = []
@@ -173,10 +183,10 @@ def start_node():
     # depth image
     #   /camera/depth/image_raw
     # rospy.Subscriber('/camera/color/image_raw/', Image, converter.color_image_callback)
-    rospy.Subscriber('/camera/color/image_raw/compressed', Image, converter.color_image_callback)
+    rospy.Subscriber('/camera/color/image_raw/compressed', CompressedImage, converter.color_image_callback, queue_size = 1)
 
-    # rospy.Subscriber('/camera/aligned_depth_to_color/image_raw', Image, converter.depth_image_callback)
-    rospy.Subscriber('/camera/aligned_depth_to_color/image_raw/compressed', Image, converter.depth_image_callback)
+    rospy.Subscriber('/camera/aligned_depth_to_color/image_raw', Image, converter.depth_image_callback)
+    # rospy.Subscriber('/camera/aligned_depth_to_color/image_raw/compressed', Image, converter.depth_image_callback)
 
     
     # hold till system ends
