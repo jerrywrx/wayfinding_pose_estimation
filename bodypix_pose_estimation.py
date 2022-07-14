@@ -19,7 +19,7 @@ class ImageConverter:
         ## TODO replace all deprecated API, follow the warning message
         # load model (once)
         self.bodypix_model = load_model(download_model(
-            BodyPixModelPaths.MOBILENET_FLOAT_50_STRIDE_16
+            BodyPixModelPaths.MOBILENET_FLOAT_100_STRIDE_16
         ))
         self.depth_thres = 0.8
         self.half_shoulder_length = 0.70/2
@@ -63,7 +63,7 @@ class ImageConverter:
 
             self.color_image_timestamp = data.header.stamp.secs
             # print('abc')
-            np_arr = np.fromstring(data.data, np.uint8)
+            np_arr = np.frombuffer(data.data, np.uint8)
             self.color_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             # self.color_image = ros_numpy.numpify(data)
 
