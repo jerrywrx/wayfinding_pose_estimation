@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import ros_numpy
 import rospy
+import time
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image, CompressedImage
 from sklearn.linear_model import LinearRegression
@@ -43,6 +44,7 @@ class ImageConverter:
 
 
     def depth_image_callback(self, data):
+        # print("test1")
         try:
             rospy.logdebug('new depth_image, timestamp %d', data.header.stamp.secs)
             
@@ -55,9 +57,13 @@ class ImageConverter:
             rospy.logerr('depth_image_callback error: "%s"', e)
 
         if self.depth_image_timestamp == self.color_image_timestamp:
+            t1 = time.perf_counter()
             self.pose_estimation()
+            t2 = time.perf_counter()
+            # print(t2-t1)
 
     def color_image_callback(self, data):
+        # print("test2")
         try:
             rospy.logdebug('new color_image, timestamp %d', data.header.stamp.secs)
 
@@ -71,7 +77,10 @@ class ImageConverter:
             rospy.logerr('color_image_callback error: "%s"', e)
 
         if self.color_image_timestamp == self.depth_image_timestamp:
+            t3 = time.perf_counter()
             self.pose_estimation()
+            t4 = time.perf_counter()
+            # print(t4-t3)
 
     def pose_estimation(self):
         rospy.logdebug('pose_estimation, timestamp %d', self.color_image_timestamp)
@@ -81,7 +90,7 @@ class ImageConverter:
             self.depth_image.shape, 
             self.color_image.shape
         )
-        
+        # t1 = time.perf_counter()
             # self.depth_image = cv2.imdecode(np_arr, cv2.CV_LOAD_IMAGE_COLOR)
         result = self.bodypix_model.predict_single(self.color_image)
 
@@ -92,28 +101,24 @@ class ImageConverter:
         cv2.imwrite("img2.png", trunk)
 
         trunk_mask = np.where(trunk > self.depth_thres, 1 , 0)
-        if np.sum(trunk_mask) == 0:
-            rospy.loginfo('No User Detected...')
-            return
-        else:
-            rospy.loginfo('trunk extracted...')
+        # if np.sum(trunk_mask) == 0:
+        #     rospy.loginfo('No User Detected...')
+        #     return
+        # else:
+        #     rospy.loginfo('trunk extracted...')
         masked_depth_image = self.depth_image* trunk_mask
 
         # saving the trunk_mask image
         pre_trunk = 255*trunk_mask
         cv2.imwrite("img.png", 255*pre_trunk)
 
-        
-
         non_zero_parts = np.array(np.nonzero(masked_depth_image))
-        
         trunk_dict = {}
             # self.depth_image = cv2.imdecode(np_arr, cv2.CV_LOAD_IMAGE_COLOR)
         for i in range(non_zero_parts.shape[1]):
             if non_zero_parts[0,i] not in trunk_dict:
                 trunk_dict[non_zero_parts[0,i]] = []
             trunk_dict[non_zero_parts[0,i]].append(non_zero_parts[1,i])
-
         trunk_center = 0
         # TODO we should just iterate over elements instead of doing keys then __getitem__
         for j in trunk_dict.keys():
@@ -137,16 +142,26 @@ class ImageConverter:
             regression_model.fit(x,y)
             slope = regression_model.coef_
             angle.append(np.arctan(slope))
-        angle = np.mean(np.array(angle))
+        angle = np.mean(np.array(angle))        # angle between human and camera
         rospy.logdebug("angle: %f" , np.rad2deg(angle))
-        y_coor = np.mean(non_zero_parts[1,:])
+        # y_coor = np.mean(non_zero_parts[1,:])
+        depth_sum = 0
+        for i in range (len(non_zero_parts[0])):
+            depth_sum += masked_depth_image[non_zero_parts[0,i], non_zero_parts[1,i]]
+        y_coor = depth_sum/len(non_zero_parts[0])
+        f = open("test.txt", "a")
+        f.write(str(non_zero_parts[1,:])+'\n')
+        f.close()
         rospy.logdebug("y coordinate: %f", y_coor)
         pix_real_ratio = pixel_ratio(y_coor)
         img_center = self.color_image.shape[1]/2
-        x_coor = (trunk_center - img_center)*pix_real_ratio
+        # print("Shape: ", self.color_image.shape)
+        # print("img_center: ", img_center)
+        # print("trunk center: ", trunk_center)
+        x_coor = (trunk_center - img_center)*pix_real_ratio     ##
         rospy.logdebug("x coordinate: %f", x_coor)
         center_point = np.array([x_coor/10,y_coor/1000])
-        cur_HTM = HTM(angle, x_coor, y_coor)
+        cur_HTM = HTM(angle, x_coor, y_coor)        # processed data after fixing angle difference
         rectangle_tips = np.array([np.matmul(cur_HTM, np.array([-1*self.half_shoulder_length/pix_real_ratio, -1*self.half_chest_thickness/pix_real_ratio, 0, 1]).T), 
                                    np.matmul(cur_HTM, np.array([   self.half_shoulder_length/pix_real_ratio, -1*self.half_chest_thickness/pix_real_ratio, 0, 1]).T),
                                    np.matmul(cur_HTM, np.array([-1*self.half_shoulder_length/pix_real_ratio,    self.half_chest_thickness/pix_real_ratio, 0, 1]).T), 
@@ -156,6 +171,11 @@ class ImageConverter:
         self.output["angle"] = angle
         self.output["center_point"] = center_point
         self.output["rectangle_tips"] = rectangle_tips
+
+        # print("Angle: ", angle)
+        print("Center Point: ", center_point)
+        # print("Tips: ", rectangle_tips)
+        # print(non_zero_parts[1,:])
 
         # r1, r2 = 0.35/2, 0.3/2 # r1 -> turtlebot radius r2 -> human radius hardcore
         human_pos, r2 = self.output['center_point'], self.output['radius']
@@ -168,7 +188,10 @@ class ImageConverter:
         transform_array = np.array([[np.cos(transform_theta),-np.sin(transform_theta)],[np.sin(transform_theta),np.cos(transform_theta)]])
         result_footprint = transform_array @ footprint_point_array
         rospy.set_param('footprint',result_footprint.tolist())
-        print("x, y, r2: ", x_, y_, r2)
+        # print("x, y, r2: ", x_, y_, r2)
+        # t2 = time.perf_counter()
+        # print("time: ", t2-t1)
+
         return
 
 
@@ -183,12 +206,10 @@ def start_node():
     # depth image
     #   /camera/depth/image_raw
     # rospy.Subscriber('/camera/color/image_raw/', Image, converter.color_image_callback)
-    rospy.Subscriber('/camera/color/image_raw/compressed', CompressedImage, converter.color_image_callback, queue_size = 1)
+    rospy.Subscriber('/camera/color/image_raw/compressed', CompressedImage, converter.color_image_callback)
 
     rospy.Subscriber('/camera/aligned_depth_to_color/image_raw', Image, converter.depth_image_callback)
     # rospy.Subscriber('/camera/aligned_depth_to_color/image_raw/compressed', Image, converter.depth_image_callback)
-
-    
     # hold till system ends
     rospy.spin()
 
